@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -32,6 +33,7 @@ func LoadOrGenerate(path string) (*Signer, error) {
 		return nil, fmt.Errorf("read key %q: %w", path, err)
 	}
 
+	log.Printf("keys: no signing key at %q; generating a new one — persist this path (e.g. a volume) or clients will reject tokens after restarts", path)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("generate key: %w", err)
