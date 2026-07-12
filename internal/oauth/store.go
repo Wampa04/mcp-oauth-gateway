@@ -36,25 +36,53 @@ type PendingFlow struct {
 	Expiry        time.Time
 }
 
+type consentGrant struct {
+	clientID string
+	expiry   time.Time
+}
+
+// maxClients bounds the in-memory DCR registry so unauthenticated /register
+// cannot exhaust memory; the oldest client is evicted past this cap.
+const maxClients = 10000
+
 type Store struct {
-	mu      sync.Mutex
-	clients map[string]*Client
-	codes   map[string]*AuthCode
-	pending map[string]*PendingFlow
+	mu       sync.Mutex
+	clients  map[string]*Client
+	codes    map[string]*AuthCode
+	pending  map[string]*PendingFlow
+	consents map[string]consentGrant
 }
 
 func NewStore() *Store {
 	return &Store{
-		clients: make(map[string]*Client),
-		codes:   make(map[string]*AuthCode),
-		pending: make(map[string]*PendingFlow),
+		clients:  make(map[string]*Client),
+		codes:    make(map[string]*AuthCode),
+		pending:  make(map[string]*PendingFlow),
+		consents: make(map[string]consentGrant),
 	}
 }
 
 func (s *Store) SaveClient(c *Client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.clients) >= maxClients {
+		s.evictOldestClient()
+	}
 	s.clients[c.ID] = c
+}
+
+// evictOldestClient removes the client with the earliest CreatedAt. Caller holds mu.
+func (s *Store) evictOldestClient() {
+	var oldestID string
+	var oldest time.Time
+	for id, c := range s.clients {
+		if oldestID == "" || c.CreatedAt.Before(oldest) {
+			oldestID, oldest = id, c.CreatedAt
+		}
+	}
+	if oldestID != "" {
+		delete(s.clients, oldestID)
+	}
 }
 
 func (s *Store) GetClient(id string) (*Client, bool) {
@@ -107,7 +135,33 @@ func (s *Store) TakeCode(code string) (*AuthCode, bool) {
 	return a, true
 }
 
-// GC drops expired codes and pending flows. Call periodically.
+// SaveConsent stores a one-time consent token bound to a client.
+func (s *Store) SaveConsent(token, clientID string, ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consents[token] = consentGrant{clientID: clientID, expiry: time.Now().Add(ttl)}
+}
+
+// TakeConsent consumes a consent token, returning the bound client; ok is false
+// if missing/expired.
+func (s *Store) TakeConsent(token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, ok := s.consents[token]
+	if !ok {
+		return "", false
+	}
+	delete(s.consents, token)
+	if time.Now().After(g.expiry) {
+		return "", false
+	}
+	return g.clientID, true
+}
+
+// GC drops expired codes, pending flows and consent tokens. Call periodically.
 func (s *Store) GC() {
 	now := time.Now()
 	s.mu.Lock()
@@ -120,6 +174,11 @@ func (s *Store) GC() {
 	for k, v := range s.pending {
 		if now.After(v.Expiry) {
 			delete(s.pending, k)
+		}
+	}
+	for k, v := range s.consents {
+		if now.After(v.expiry) {
+			delete(s.consents, k)
 		}
 	}
 }

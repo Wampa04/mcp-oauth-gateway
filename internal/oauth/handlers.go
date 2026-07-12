@@ -5,12 +5,12 @@ package oauth
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"time"
 
 	"mcp-oauth-gateway/internal/allowlist"
+	"mcp-oauth-gateway/internal/httputils"
 	"mcp-oauth-gateway/internal/token"
 )
 
@@ -36,23 +36,18 @@ type Handlers struct {
 const (
 	pendingTTL = 10 * time.Minute
 	codeTTL    = time.Minute
+	consentTTL = 10 * time.Minute
 )
 
 func writeError(w http.ResponseWriter, status int, code, desc string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	httputils.WriteJSON(w, status, "no-store", map[string]string{
 		"error":             code,
 		"error_description": desc,
 	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	httputils.WriteJSON(w, status, "no-store", v)
 }
 
 // validRedirectURI enforces the spec: redirect URIs must be https, or http on
@@ -66,18 +61,8 @@ func validRedirectURI(raw string) bool {
 	case "https":
 		return true
 	case "http":
-		h := u.Hostname()
-		return h == "localhost" || h == "127.0.0.1" || h == "::1"
+		return httputils.IsLoopbackHost(u.Hostname())
 	default:
 		return false
 	}
-}
-
-func contains(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

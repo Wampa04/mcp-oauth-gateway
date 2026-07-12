@@ -219,6 +219,84 @@ func TestNonAllowlistedUserDenied(t *testing.T) {
 	}
 }
 
+func TestConsentRequiresServerToken(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	h.Consent = true
+	clientID := registerClient(t, h)
+
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", clientID)
+	q.Set("redirect_uri", testRedirect)
+	q.Set("code_challenge", ChallengeS256(testVerifier))
+	q.Set("code_challenge_method", "S256")
+	q.Set("resource", testIssuer)
+
+	// No consent_token: render the consent page, do NOT start the GitHub flow.
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected consent page (200), got %d", rr.Code)
+	}
+	if br.lastState != "" {
+		t.Fatal("GitHub flow must not start without consent")
+	}
+
+	// Forged/guessed token: still no bypass.
+	q.Set("consent_token", "forged-token")
+	rr = httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if br.lastState != "" {
+		t.Fatal("forged consent token must not start the GitHub flow")
+	}
+
+	// Valid server-issued token: proceeds.
+	ct := randomToken()
+	h.Store.SaveConsent(ct, clientID, time.Minute)
+	q.Set("consent_token", ct)
+	rr = httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("valid consent should redirect to GitHub, got %d", rr.Code)
+	}
+	if br.lastState == "" {
+		t.Fatal("GitHub flow should have started after consent")
+	}
+
+	// Single-use: the same token cannot be replayed.
+	br.lastState = ""
+	rr = httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if br.lastState != "" {
+		t.Fatal("consent token must be single-use")
+	}
+}
+
+func TestConsentTokenBoundToClient(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	h.Consent = true
+	clientID := registerClient(t, h)
+
+	// Token issued for a different client must not authorize this one.
+	ct := randomToken()
+	h.Store.SaveConsent(ct, "some-other-client", time.Minute)
+
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", clientID)
+	q.Set("redirect_uri", testRedirect)
+	q.Set("code_challenge", ChallengeS256(testVerifier))
+	q.Set("code_challenge_method", "S256")
+	q.Set("resource", testIssuer)
+	q.Set("consent_token", ct)
+
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if br.lastState != "" {
+		t.Fatal("consent token bound to another client must not authorize this one")
+	}
+}
+
 func TestMissingPKCERejected(t *testing.T) {
 	h, _ := newTestHandlers(t, []int64{42}, 42)
 	clientID := registerClient(t, h)

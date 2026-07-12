@@ -4,7 +4,10 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
+
+	"mcp-oauth-gateway/internal/routes"
 )
 
 // Authorize handles GET /authorize: validate the client request, optionally show
@@ -21,7 +24,7 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Exact redirect_uri match against registration; never redirect to an
 	// unregistered URI.
-	if !contains(client.RedirectURIs, redirectURI) {
+	if !slices.Contains(client.RedirectURIs, redirectURI) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "redirect_uri not registered for this client")
 		return
 	}
@@ -45,9 +48,14 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.Consent && q.Get("consent") != "granted" {
-		h.renderConsent(w, r, client)
-		return
+	// Consent is proven by a one-time server-issued token from renderConsent,
+	// not a client-supplied flag, so a client cannot skip the screen.
+	if h.Consent {
+		cid, ok := h.Store.TakeConsent(q.Get("consent_token"))
+		if !ok || cid != clientID {
+			h.renderConsent(w, r, client)
+			return
+		}
 	}
 
 	state := randomToken()
@@ -126,9 +134,11 @@ func redirectErr(w http.ResponseWriter, r *http.Request, redirectURI, state, cod
 // renderConsent shows a minimal per-client consent page (confused-deputy
 // mitigation) that re-issues the same request with consent granted.
 func (h *Handlers) renderConsent(w http.ResponseWriter, r *http.Request, client *Client) {
+	ct := randomToken()
+	h.Store.SaveConsent(ct, client.ID, consentTTL)
 	q := r.URL.Query()
-	q.Set("consent", "granted")
-	proceed := "/authorize?" + q.Encode()
+	q.Set("consent_token", ct)
+	proceed := routes.Authorize + "?" + q.Encode()
 
 	name := client.Name
 	if name == "" {
