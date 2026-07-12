@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +17,8 @@ const (
 	authorizeURL = "https://github.com/login/oauth/authorize"
 	tokenURL     = "https://github.com/login/oauth/access_token"
 	userURL      = "https://api.github.com/user"
+
+	maxResponseBytes = 1 << 20 // cap GitHub responses to guard against huge bodies
 )
 
 type Client struct {
@@ -76,7 +79,7 @@ func (c *Client) exchangeCode(ctx context.Context, code, redirectURI string) (st
 		Error       string `json:"error"`
 		ErrorDesc   string `json:"error_description"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&body); err != nil {
 		return "", fmt.Errorf("decode github token response: %w", err)
 	}
 	if body.Error != "" {
@@ -109,7 +112,7 @@ func (c *Client) fetchUser(ctx context.Context, accessToken string) (int64, stri
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&user); err != nil {
 		return 0, "", fmt.Errorf("decode github user: %w", err)
 	}
 	if user.ID == 0 {
