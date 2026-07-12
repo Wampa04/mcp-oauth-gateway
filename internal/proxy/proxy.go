@@ -4,6 +4,7 @@ package proxy
 
 import (
 	"fmt"
+	"net/http"
 	"net/http/httputil"
 	"net/url"
 )
@@ -18,5 +19,13 @@ func New(upstream string) (*httputil.ReverseProxy, error) {
 	}
 	rp := httputil.NewSingleHostReverseProxy(u)
 	rp.FlushInterval = -1 // flush immediately for SSE / long-lived streams
+
+	orig := rp.Director
+	rp.Director = func(r *http.Request) {
+		orig(r)
+		// Never pass the client's gateway token to the upstream (MCP spec
+		// forbids token passthrough); the upstream is outside the trust boundary.
+		r.Header.Del("Authorization")
+	}
 	return rp, nil
 }
