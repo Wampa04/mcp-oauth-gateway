@@ -11,8 +11,7 @@ func VerifyS256(verifier, challenge string) bool {
 	if verifier == "" || challenge == "" {
 		return false
 	}
-	sum := sha256.Sum256([]byte(verifier))
-	computed := base64.RawURLEncoding.EncodeToString(sum[:])
+	computed := ChallengeS256(verifier)
 	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
 }
 

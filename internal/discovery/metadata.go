@@ -3,11 +3,18 @@
 package discovery
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"mcp-oauth-gateway/internal/httputils"
 	"mcp-oauth-gateway/internal/keys"
+	"mcp-oauth-gateway/internal/routes"
 )
+
+// jwksMaxAge is kept short so a signing-key change is picked up quickly instead
+// of clients rejecting freshly issued tokens against a stale cached key.
+const jwksMaxAge = "public, max-age=300"
+
+const metadataMaxAge = "public, max-age=3600"
 
 type Handlers struct {
 	Issuer   string
@@ -15,15 +22,9 @@ type Handlers struct {
 	Signer   *keys.Signer
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // ProtectedResource serves /.well-known/oauth-protected-resource (RFC 9728).
 func (h *Handlers) ProtectedResource(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
+	httputils.WriteJSON(w, http.StatusOK, metadataMaxAge, map[string]any{
 		"resource":                 h.Resource,
 		"authorization_servers":    []string{h.Issuer},
 		"scopes_supported":         []string{},
@@ -33,12 +34,12 @@ func (h *Handlers) ProtectedResource(w http.ResponseWriter, _ *http.Request) {
 
 // AuthorizationServer serves /.well-known/oauth-authorization-server (RFC 8414).
 func (h *Handlers) AuthorizationServer(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
+	httputils.WriteJSON(w, http.StatusOK, metadataMaxAge, map[string]any{
 		"issuer":                                h.Issuer,
-		"authorization_endpoint":                h.Issuer + "/authorize",
-		"token_endpoint":                        h.Issuer + "/token",
-		"registration_endpoint":                 h.Issuer + "/register",
-		"jwks_uri":                              h.Issuer + "/.well-known/jwks.json",
+		"authorization_endpoint":                h.Issuer + routes.Authorize,
+		"token_endpoint":                        h.Issuer + routes.Token,
+		"registration_endpoint":                 h.Issuer + routes.Register,
+		"jwks_uri":                              h.Issuer + routes.JWKS,
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code"},
 		"code_challenge_methods_supported":      []string{"S256"},
@@ -48,5 +49,5 @@ func (h *Handlers) AuthorizationServer(w http.ResponseWriter, _ *http.Request) {
 
 // JWKS serves /.well-known/jwks.json with the public signing key.
 func (h *Handlers) JWKS(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, h.Signer.JWKS())
+	httputils.WriteJSON(w, http.StatusOK, jwksMaxAge, h.Signer.JWKS())
 }

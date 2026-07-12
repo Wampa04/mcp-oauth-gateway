@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"mcp-oauth-gateway/internal/httputils"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -118,7 +120,7 @@ func (c *Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("config: invalid issuer %q: %w", c.Issuer, err)
 	}
-	if iss.Scheme != "https" && !isLocalhost(iss.Hostname()) {
+	if iss.Scheme != "https" && !httputils.IsLoopbackHost(iss.Hostname()) {
 		return fmt.Errorf("config: issuer must use https (got %q); only localhost may use http", c.Issuer)
 	}
 	if c.Upstream == "" {
@@ -140,8 +142,4 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: tls.cert_file and tls.key_file must be set together")
 	}
 	return nil
-}
-
-func isLocalhost(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }

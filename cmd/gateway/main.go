@@ -18,6 +18,7 @@ import (
 	"mcp-oauth-gateway/internal/keys"
 	"mcp-oauth-gateway/internal/oauth"
 	"mcp-oauth-gateway/internal/proxy"
+	"mcp-oauth-gateway/internal/routes"
 	"mcp-oauth-gateway/internal/server"
 	"mcp-oauth-gateway/internal/token"
 )
@@ -51,7 +52,7 @@ func run() error {
 	oauthH := &oauth.Handlers{
 		Issuer:      cfg.Issuer,
 		Resource:    cfg.Resource,
-		CallbackURL: cfg.Issuer + "/callback",
+		CallbackURL: cfg.Issuer + routes.Callback,
 		TokenTTL:    cfg.TokenTTL,
 		Consent:     cfg.Consent(),
 		Store:       store,
@@ -69,7 +70,7 @@ func run() error {
 
 	mw := &server.Middleware{
 		Validator:           validator,
-		ResourceMetadataURL: cfg.Issuer + "/.well-known/oauth-protected-resource",
+		ResourceMetadataURL: cfg.Issuer + routes.ProtectedResource,
 	}
 
 	handler := server.New(disc, oauthH, mw, rp)

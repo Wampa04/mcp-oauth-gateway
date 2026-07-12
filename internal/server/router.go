@@ -5,6 +5,7 @@ import (
 
 	"mcp-oauth-gateway/internal/discovery"
 	"mcp-oauth-gateway/internal/oauth"
+	"mcp-oauth-gateway/internal/routes"
 )
 
 // New wires the public OAuth/metadata endpoints and puts everything else behind
@@ -12,17 +13,17 @@ import (
 func New(disc *discovery.Handlers, oa *oauth.Handlers, mw *Middleware, upstream http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/.well-known/oauth-protected-resource", disc.ProtectedResource)
-	mux.HandleFunc("/.well-known/oauth-authorization-server", disc.AuthorizationServer)
-	mux.HandleFunc("/.well-known/openid-configuration", disc.AuthorizationServer)
-	mux.HandleFunc("/.well-known/jwks.json", disc.JWKS)
+	mux.HandleFunc(routes.ProtectedResource, disc.ProtectedResource)
+	mux.HandleFunc(routes.AuthorizationServer, disc.AuthorizationServer)
+	mux.HandleFunc(routes.OpenIDConfiguration, disc.AuthorizationServer)
+	mux.HandleFunc(routes.JWKS, disc.JWKS)
 
-	mux.HandleFunc("/authorize", oa.Authorize)
-	mux.HandleFunc("/callback", oa.Callback)
-	mux.HandleFunc("/token", oa.Token)
-	mux.HandleFunc("/register", oa.Register)
+	mux.HandleFunc(routes.Authorize, oa.Authorize)
+	mux.HandleFunc(routes.Callback, oa.Callback)
+	mux.HandleFunc(routes.Token, oa.Token)
+	mux.HandleFunc(routes.Register, oa.Register)
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc(routes.Healthz, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
