@@ -14,6 +14,8 @@ func New(disc *discovery.Handlers, oa *oauth.Handlers, mw *Middleware, upstream 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc(routes.ProtectedResource, disc.ProtectedResource)
+	// Path-specific variant (RFC 9728), e.g. /.well-known/oauth-protected-resource/mcp.
+	mux.HandleFunc(routes.ProtectedResource+"/", disc.ProtectedResource)
 	mux.HandleFunc(routes.AuthorizationServer, disc.AuthorizationServer)
 	mux.HandleFunc(routes.OpenIDConfiguration, disc.AuthorizationServer)
 	mux.HandleFunc(routes.JWKS, disc.JWKS)
@@ -30,5 +32,5 @@ func New(disc *discovery.Handlers, oa *oauth.Handlers, mw *Middleware, upstream 
 
 	mux.Handle("/", mw.Auth(upstream))
 
-	return Logging(mux)
+	return Logging(CORS(mux))
 }
