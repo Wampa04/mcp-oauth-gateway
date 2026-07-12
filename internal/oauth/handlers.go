@@ -50,6 +50,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	httputils.WriteJSON(w, status, "no-store", v)
 }
 
+// sameOrigin reports whether a and b share scheme and host (incl. port).
+func sameOrigin(a, b string) bool {
+	ua, err1 := url.Parse(a)
+	ub, err2 := url.Parse(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return ua.Scheme == ub.Scheme && ua.Host == ub.Host
+}
+
 // validRedirectURI enforces the spec: redirect URIs must be https, or http on
 // loopback only.
 func validRedirectURI(raw string) bool {

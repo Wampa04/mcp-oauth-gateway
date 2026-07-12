@@ -297,6 +297,48 @@ func TestConsentTokenBoundToClient(t *testing.T) {
 	}
 }
 
+func TestResourceUnderOriginAccepted(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", clientID)
+	q.Set("redirect_uri", testRedirect)
+	q.Set("code_challenge", ChallengeS256(testVerifier))
+	q.Set("code_challenge_method", "S256")
+	q.Set("resource", testIssuer+"/mcp") // full endpoint URL, same origin
+
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if rr.Code != http.StatusFound || br.lastState == "" {
+		t.Fatalf("resource under gateway origin should be accepted, got %d", rr.Code)
+	}
+}
+
+func TestForeignResourceRejected(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", clientID)
+	q.Set("redirect_uri", testRedirect)
+	q.Set("code_challenge", ChallengeS256(testVerifier))
+	q.Set("code_challenge_method", "S256")
+	q.Set("resource", "https://evil.example.com/mcp")
+
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if br.lastState != "" {
+		t.Fatal("foreign-origin resource must not start the flow")
+	}
+	loc, _ := url.Parse(rr.Header().Get("Location"))
+	if loc.Query().Get("error") != "invalid_target" {
+		t.Fatalf("expected invalid_target, got %q", loc.Query().Get("error"))
+	}
+}
+
 func TestMissingPKCERejected(t *testing.T) {
 	h, _ := newTestHandlers(t, []int64{42}, 42)
 	clientID := registerClient(t, h)

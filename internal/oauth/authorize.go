@@ -39,12 +39,10 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		redirectErr(w, r, redirectURI, q.Get("state"), "invalid_request", "PKCE with code_challenge_method=S256 is required")
 		return
 	}
-	resource := q.Get("resource")
-	if resource == "" {
-		resource = h.Resource
-	}
-	if resource != h.Resource {
-		redirectErr(w, r, redirectURI, q.Get("state"), "invalid_target", "resource does not match this MCP server")
+	// Accept any resource under our origin (a client may target the full MCP
+	// endpoint URL, e.g. .../mcp); tokens are bound to our canonical Resource.
+	if rp := q.Get("resource"); rp != "" && !sameOrigin(rp, h.Resource) {
+		redirectErr(w, r, redirectURI, q.Get("state"), "invalid_target", "resource is not served by this gateway")
 		return
 	}
 
@@ -64,7 +62,7 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		RedirectURI:   redirectURI,
 		ClientState:   q.Get("state"),
 		CodeChallenge: challenge,
-		Resource:      resource,
+		Resource:      h.Resource,
 		Scope:         q.Get("scope"),
 		Expiry:        time.Now().Add(pendingTTL),
 	})
