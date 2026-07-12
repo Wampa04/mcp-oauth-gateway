@@ -25,12 +25,13 @@ func (m *Middleware) Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := bearerToken(r)
 		if raw == "" {
-			m.challenge(w, "missing bearer token")
+			// No credentials: bare challenge with no error code (RFC 6750 §3.1).
+			m.challenge(w, "")
 			return
 		}
 		claims, err := m.Validator.Validate(raw)
 		if err != nil {
-			m.challenge(w, "invalid token")
+			m.challenge(w, "invalid_token")
 			return
 		}
 		ctx := context.WithValue(r.Context(), subjectKey, claims.Subject)
@@ -38,12 +39,19 @@ func (m *Middleware) Auth(next http.Handler) http.Handler {
 	})
 }
 
-func (m *Middleware) challenge(w http.ResponseWriter, desc string) {
-	w.Header().Set("WWW-Authenticate",
-		`Bearer error="invalid_token", error_description="`+desc+`", resource_metadata="`+m.ResourceMetadataURL+`"`)
-	w.Header().Set("Content-Type", "application/json")
+func (m *Middleware) challenge(w http.ResponseWriter, errCode string) {
+	params := `Bearer resource_metadata="` + m.ResourceMetadataURL + `"`
+	if errCode != "" {
+		params = `Bearer error="` + errCode + `", resource_metadata="` + m.ResourceMetadataURL + `"`
+	}
+	w.Header().Set("WWW-Authenticate", params)
+	if errCode != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"` + errCode + `"}`))
+		return
+	}
 	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"error":"invalid_token"}`))
 }
 
 func bearerToken(r *http.Request) string {
@@ -79,9 +87,6 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// Flush implements http.Flusher so SSE streaming survives the logging wrapper.
-func (w *statusWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
+// Unwrap lets http.ResponseController reach the underlying writer's Flusher and
+// Hijacker, so SSE streaming and connection upgrades survive the logging wrapper.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
