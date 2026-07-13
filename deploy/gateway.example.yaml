@@ -1,0 +1,30 @@
+# External base URL clients reach the gateway at. Must be https in production
+# (only localhost may use http). This is the OAuth issuer identity.
+issuer: https://mcp.example.com
+
+# Path clients connect to for MCP; also the token audience (RFC 8707). Default /mcp.
+mcp_path: /mcp
+
+# Internal URL of the unauthenticated MCP server (compose service name).
+upstream: http://osmmcp:8000
+
+# GitHub numeric user IDs allowed through the gateway (fail-closed: empty = nobody).
+# Find yours: curl https://api.github.com/users/<login>  ->  "id"
+allowed_github_ids:
+  - 62141839
+
+# RSA signing key. Keep on a persistent volume so issued tokens survive restarts;
+# a regenerated key invalidates all outstanding tokens.
+key_path: /app/keys/signing.pem
+
+# Access-token lifetime.
+token_ttl: 1h
+
+# Show a per-client consent screen before redirecting to GitHub
+# (confused-deputy mitigation). Set false to skip it.
+require_consent: true
+
+listen: ":8080"
+
+# github.client_id / github.client_secret are taken from the
+# GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET environment variables.

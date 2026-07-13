@@ -1,0 +1,9 @@
+# Local build override: build the gateway image from source instead of pulling
+# it from GHCR. Use together with the base compose file:
+#
+#   docker compose -f docker-compose.yml -f local.compose.yaml up -d --build
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile

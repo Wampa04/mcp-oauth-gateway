@@ -1,0 +1,48 @@
+# MCP OAuth gateway in front of an unauthenticated MCP server.
+#
+# Setup:
+#   cp gateway.example.yaml gateway.yaml   # edit issuer / allowed_github_ids / upstream
+#   cp ../.env.example .env                # add your GitHub OAuth app credentials
+#   docker compose up -d                   # pulls the published image from GHCR
+#
+# To build from source instead of pulling, add the local override:
+#   docker compose -f docker-compose.yml -f local.compose.yaml up -d --build
+#
+# The GitHub OAuth app's callback URL must be <issuer>/callback.
+services:
+  gateway:
+    image: ghcr.io/wampa04/mcp-oauth-gateway:latest
+    env_file: .env
+    volumes:
+      - ./gateway.yaml:/app/gateway.yaml:ro
+      - gateway-keys:/app/keys        # persist the signing key across restarts
+    depends_on:
+      - osmmcp
+    networks:
+      - default                       # reaches osmmcp + egress to github.com
+      - proxy                         # shared Traefik network (TLS termination)
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp-gateway.rule=Host(`mcp.example.com`)"
+      - "traefik.http.routers.mcp-gateway.entrypoints=websecure"
+      - "traefik.http.routers.mcp-gateway.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mcp-gateway.loadbalancer.server.port=8080"
+    # Local testing without Traefik: comment out the labels + proxy network above
+    # and publish the port directly:
+    # ports:
+    #   - "8080:8080"
+
+  # The unauthenticated MCP server. No published ports: only the gateway reaches it.
+  osmmcp:
+    image: ghcr.io/example/osmmcp:latest   # replace with your MCP server image
+    networks:
+      - default
+    restart: unless-stopped
+
+networks:
+  proxy:
+    external: true      # pre-existing Traefik network; remove if testing without Traefik
+
+volumes:
+  gateway-keys:
