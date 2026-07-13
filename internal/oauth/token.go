@@ -40,7 +40,7 @@ func (h *Handlers) Token(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri mismatch")
 		return
 	}
-	if res := r.Form.Get("resource"); res != "" && !sameOrigin(res, ac.Resource) {
+	if res := r.Form.Get("resource"); res != "" && !h.acceptsResource(res) {
 		writeError(w, http.StatusBadRequest, "invalid_target", "resource is not served by this gateway")
 		return
 	}

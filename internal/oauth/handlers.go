@@ -27,6 +27,10 @@ type Handlers struct {
 	TokenTTL    time.Duration
 	Consent     bool
 
+	// ResourceOrigin is the precomputed origin of Resource (optional; derived
+	// from Resource when empty).
+	ResourceOrigin string
+
 	Store  *Store
 	Allow  *allowlist.Allowlist
 	Tokens *token.Issuer
@@ -50,14 +54,37 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	httputils.WriteJSON(w, status, "no-store", v)
 }
 
-// sameOrigin reports whether a and b share scheme and host (incl. port).
-func sameOrigin(a, b string) bool {
-	ua, err1 := url.Parse(a)
-	ub, err2 := url.Parse(b)
-	if err1 != nil || err2 != nil {
-		return false
+// acceptsResource reports whether a client-supplied resource shares the
+// gateway's origin (a client may target the full MCP endpoint URL under it).
+// Tokens are always bound to h.Resource regardless, so this does not widen the
+// audience.
+func (h *Handlers) acceptsResource(raw string) bool {
+	if raw == "" {
+		return true
 	}
-	return ua.Scheme == ub.Scheme && ua.Host == ub.Host
+	ref := h.ResourceOrigin
+	if ref == "" {
+		ref = OriginOf(h.Resource)
+	}
+	return OriginOf(raw) == ref
+}
+
+// OriginOf returns the normalized "scheme://host[:port]" of raw, dropping
+// default ports so https://h and https://h:443 compare equal. Empty on error.
+func OriginOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	if p := u.Port(); p != "" && !isDefaultPort(u.Scheme, p) {
+		host += ":" + p
+	}
+	return u.Scheme + "://" + host
+}
+
+func isDefaultPort(scheme, port string) bool {
+	return (scheme == "https" && port == "443") || (scheme == "http" && port == "80")
 }
 
 // validRedirectURI enforces the spec: redirect URIs must be https, or http on

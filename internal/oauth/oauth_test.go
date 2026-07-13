@@ -316,6 +316,25 @@ func TestResourceUnderOriginAccepted(t *testing.T) {
 	}
 }
 
+func TestResourceDefaultPortAccepted(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", clientID)
+	q.Set("redirect_uri", testRedirect)
+	q.Set("code_challenge", ChallengeS256(testVerifier))
+	q.Set("code_challenge_method", "S256")
+	q.Set("resource", "https://mcp.example.com:443/mcp") // explicit default port
+
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil))
+	if rr.Code != http.StatusFound || br.lastState == "" {
+		t.Fatalf("explicit default port should be treated as same origin, got %d", rr.Code)
+	}
+}
+
 func TestForeignResourceRejected(t *testing.T) {
 	h, br := newTestHandlers(t, []int64{42}, 42)
 	clientID := registerClient(t, h)

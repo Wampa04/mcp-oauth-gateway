@@ -52,7 +52,10 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		Name:         req.ClientName,
 		CreatedAt:    time.Now(),
 	}
-	h.Store.SaveClient(client)
+	if !h.Store.SaveClient(client) {
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "client registry is full, try again later")
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, registrationResponse{
 		ClientID:                client.ID,

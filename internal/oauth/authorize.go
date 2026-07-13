@@ -41,7 +41,7 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Accept any resource under our origin (a client may target the full MCP
 	// endpoint URL, e.g. .../mcp); tokens are bound to our canonical Resource.
-	if rp := q.Get("resource"); rp != "" && !sameOrigin(rp, h.Resource) {
+	if rp := q.Get("resource"); rp != "" && !h.acceptsResource(rp) {
 		redirectErr(w, r, redirectURI, q.Get("state"), "invalid_target", "resource is not served by this gateway")
 		return
 	}
@@ -57,7 +57,7 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := randomToken()
-	h.Store.SavePending(state, &PendingFlow{
+	if !h.Store.SavePending(state, &PendingFlow{
 		ClientID:      clientID,
 		RedirectURI:   redirectURI,
 		ClientState:   q.Get("state"),
@@ -65,7 +65,10 @@ func (h *Handlers) Authorize(w http.ResponseWriter, r *http.Request) {
 		Resource:      h.Resource,
 		Scope:         q.Get("scope"),
 		Expiry:        time.Now().Add(pendingTTL),
-	})
+	}) {
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many in-flight authorizations, try again later")
+		return
+	}
 	http.Redirect(w, r, h.GitHub.AuthURL(state, h.CallbackURL), http.StatusFound)
 }
 
@@ -133,7 +136,10 @@ func redirectErr(w http.ResponseWriter, r *http.Request, redirectURI, state, cod
 // mitigation) that re-issues the same request with consent granted.
 func (h *Handlers) renderConsent(w http.ResponseWriter, r *http.Request, client *Client) {
 	ct := randomToken()
-	h.Store.SaveConsent(ct, client.ID, consentTTL)
+	if !h.Store.SaveConsent(ct, client.ID, consentTTL) {
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many pending consents, try again later")
+		return
+	}
 	q := r.URL.Query()
 	q.Set("consent_token", ct)
 	proceed := routes.Authorize + "?" + q.Encode()
