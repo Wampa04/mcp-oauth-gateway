@@ -74,7 +74,7 @@ func run() error {
 		ResourceMetadataURL: cfg.Issuer + routes.ProtectedResource,
 	}
 
-	handler := server.New(disc, oauthH, mw, rp)
+	handler := server.New(disc, oauthH, mw, rp, cfg.MCPPath)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,

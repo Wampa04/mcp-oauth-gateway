@@ -10,12 +10,16 @@ import (
 
 // New wires the public OAuth/metadata endpoints and puts everything else behind
 // the auth middleware, forwarding to the upstream proxy.
-func New(disc *discovery.Handlers, oa *oauth.Handlers, mw *Middleware, upstream http.Handler) http.Handler {
+func New(disc *discovery.Handlers, oa *oauth.Handlers, mw *Middleware, upstream http.Handler, mcpPath string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc(routes.ProtectedResource, disc.ProtectedResource)
-	// Path-specific variant (RFC 9728), e.g. /.well-known/oauth-protected-resource/mcp.
-	mux.HandleFunc(routes.ProtectedResource+"/", disc.ProtectedResource)
+	// Path-specific variant (RFC 9728): /.well-known/oauth-protected-resource + the
+	// MCP path, e.g. /.well-known/oauth-protected-resource/mcp. Only the exact
+	// known path is served, so unrelated child paths don't get fake metadata.
+	if mcpPath != "" {
+		mux.HandleFunc(routes.ProtectedResource+mcpPath, disc.ProtectedResource)
+	}
 	mux.HandleFunc(routes.AuthorizationServer, disc.AuthorizationServer)
 	mux.HandleFunc(routes.OpenIDConfiguration, disc.AuthorizationServer)
 	mux.HandleFunc(routes.JWKS, disc.JWKS)

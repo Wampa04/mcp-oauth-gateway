@@ -30,8 +30,11 @@ func TestLoadValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Resource != "https://mcp.example.com" {
-		t.Errorf("Resource = %q, want issuer without slash", cfg.Resource)
+	if cfg.Resource != "https://mcp.example.com/mcp" {
+		t.Errorf("Resource = %q, want issuer + default mcp_path", cfg.Resource)
+	}
+	if cfg.MCPPath != "/mcp" {
+		t.Errorf("MCPPath default = %q, want /mcp", cfg.MCPPath)
 	}
 	if cfg.Listen != ":8080" {
 		t.Errorf("Listen default = %q", cfg.Listen)
@@ -41,6 +44,26 @@ func TestLoadValid(t *testing.T) {
 	}
 	if !cfg.Consent() {
 		t.Error("Consent should default to true")
+	}
+}
+
+func TestCustomMCPPath(t *testing.T) {
+	body := `
+issuer: https://mcp.example.com
+upstream: http://osmmcp:8000
+mcp_path: sse
+github: {client_id: cid, client_secret: secret}
+allowed_github_ids: [1]
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MCPPath != "/sse" {
+		t.Errorf("MCPPath = %q, want leading slash normalized", cfg.MCPPath)
+	}
+	if cfg.Resource != "https://mcp.example.com/sse" {
+		t.Errorf("Resource = %q, want issuer + mcp_path", cfg.Resource)
 	}
 }
 

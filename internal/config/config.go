@@ -18,7 +18,8 @@ type Config struct {
 	Issuer   string `yaml:"issuer"`   // external base URL, e.g. https://mcp.example.com
 	Listen   string `yaml:"listen"`   // bind address, e.g. ":8080"
 	Upstream string `yaml:"upstream"` // internal URL of the unauth'd MCP server
-	Resource string `yaml:"resource"` // token audience (RFC 8707); defaults to Issuer
+	MCPPath  string `yaml:"mcp_path"` // path clients connect to, e.g. /mcp
+	Resource string `yaml:"resource"` // token audience (RFC 8707); defaults to Issuer+MCPPath
 
 	GitHub GitHubConfig `yaml:"github"`
 
@@ -91,8 +92,15 @@ func (c *Config) applyEnvAndDefaults() error {
 	if c.KeyPath == "" {
 		c.KeyPath = "keys/signing.pem"
 	}
+	if c.MCPPath == "" {
+		c.MCPPath = "/mcp"
+	}
+	if !strings.HasPrefix(c.MCPPath, "/") {
+		c.MCPPath = "/" + c.MCPPath
+	}
+	c.MCPPath = strings.TrimRight(c.MCPPath, "/")
 	if c.Resource == "" {
-		c.Resource = c.Issuer
+		c.Resource = c.Issuer + c.MCPPath
 	}
 	c.Resource = strings.TrimRight(c.Resource, "/")
 
