@@ -40,18 +40,19 @@ func (m *Middleware) Auth(next http.Handler) http.Handler {
 }
 
 func (m *Middleware) challenge(w http.ResponseWriter, errCode string) {
-	params := `Bearer resource_metadata="` + m.ResourceMetadataURL + `"`
+	params := "Bearer "
 	if errCode != "" {
-		params = `Bearer error="` + errCode + `", resource_metadata="` + m.ResourceMetadataURL + `"`
+		params += `error="` + errCode + `", `
 	}
+	params += `resource_metadata="` + m.ResourceMetadataURL + `"`
 	w.Header().Set("WWW-Authenticate", params)
 	if errCode != "" {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"` + errCode + `"}`))
-		return
 	}
 	w.WriteHeader(http.StatusUnauthorized)
+	if errCode != "" {
+		_, _ = w.Write([]byte(`{"error":"` + errCode + `"}`))
+	}
 }
 
 func bearerToken(r *http.Request) string {
