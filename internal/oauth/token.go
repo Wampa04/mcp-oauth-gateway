@@ -3,16 +3,20 @@ package oauth
 import (
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	Scope       string `json:"scope,omitempty"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Scope        string `json:"scope,omitempty"`
 }
 
-// Token handles POST /token (authorization_code grant with PKCE).
+// Token handles POST /token: the authorization_code grant (with PKCE) and the
+// refresh_token grant used to renew an access token without repeating the
+// GitHub login.
 func (h *Handlers) Token(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "invalid_request", "POST required")
@@ -22,11 +26,17 @@ func (h *Handlers) Token(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "malformed form body")
 		return
 	}
-	if r.Form.Get("grant_type") != "authorization_code" {
-		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "only authorization_code is supported")
-		return
+	switch r.Form.Get("grant_type") {
+	case "authorization_code":
+		h.tokenFromCode(w, r)
+	case "refresh_token":
+		h.tokenFromRefreshToken(w, r)
+	default:
+		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "only authorization_code and refresh_token are supported")
 	}
+}
 
+func (h *Handlers) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 	ac, ok := h.Store.TakeCode(r.Form.Get("code"))
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_grant", "unknown, expired or already-used code")
@@ -53,17 +63,52 @@ func (h *Handlers) Token(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "access_denied", "this GitHub account is not permitted")
 		return
 	}
+	h.issueTokens(w, ac.ClientID, ac.GitHubUserID, ac.Resource, ac.Scope)
+}
 
-	sub := strconv.FormatInt(ac.GitHubUserID, 10)
-	access, err := h.Tokens.Issue(sub, ac.Resource, h.TokenTTL)
+func (h *Handlers) tokenFromRefreshToken(w http.ResponseWriter, r *http.Request) {
+	rt, ok := h.Store.TakeRefreshToken(r.Form.Get("refresh_token"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_grant", "unknown, expired or already-used refresh token")
+		return
+	}
+	if r.Form.Get("client_id") != rt.ClientID {
+		writeError(w, http.StatusBadRequest, "invalid_grant", "client_id mismatch")
+		return
+	}
+	// Re-check the allowlist at refresh time (fail-closed): a user removed from
+	// the allowlist loses access even with a still-valid refresh token.
+	if !h.Allow.IsAllowed(rt.GitHubUserID) {
+		writeError(w, http.StatusForbidden, "access_denied", "this GitHub account is not permitted")
+		return
+	}
+	h.issueTokens(w, rt.ClientID, rt.GitHubUserID, rt.Resource, rt.Scope)
+}
+
+// issueTokens signs a new access token and rotates the refresh token.
+func (h *Handlers) issueTokens(w http.ResponseWriter, clientID string, githubUserID int64, resource, scope string) {
+	sub := strconv.FormatInt(githubUserID, 10)
+	access, err := h.Tokens.Issue(sub, resource, h.TokenTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "could not issue token")
 		return
 	}
+	refresh := randomToken()
+	if !h.Store.SaveRefreshToken(refresh, &RefreshToken{
+		ClientID:     clientID,
+		GitHubUserID: githubUserID,
+		Resource:     resource,
+		Scope:        scope,
+		Expiry:       time.Now().Add(h.RefreshTokenTTL),
+	}) {
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many refresh tokens outstanding, try again later")
+		return
+	}
 	writeJSON(w, http.StatusOK, tokenResponse{
-		AccessToken: access,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(h.TokenTTL.Seconds()),
-		Scope:       ac.Scope,
+		AccessToken:  access,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(h.TokenTTL.Seconds()),
+		RefreshToken: refresh,
+		Scope:        scope,
 	})
 }

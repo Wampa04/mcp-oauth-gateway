@@ -86,6 +86,7 @@ directly (see the commented `ports:` block).
 | `allowed_github_ids` | — | — | fail-closed; empty = nobody |
 | `key_path` | `KEY_PATH` | `keys/signing.pem` | persist it, or restarts invalidate tokens |
 | `token_ttl` | — | `1h` | access-token lifetime |
+| `refresh_token_ttl` | — | `720h` (30d) | refresh-token lifetime; used to renew access tokens without repeating the GitHub login |
 | `require_consent` | — | `true` | per-client consent screen before GitHub |
 | `github.client_id` | `GITHUB_CLIENT_ID` | — | required |
 | `github.client_secret` | `GITHUB_CLIENT_SECRET` | — | required |
@@ -96,8 +97,11 @@ directly (see the commented `ports:` block).
 - Tokens are RS256, signed with a persisted key exposed at
   `/.well-known/jwks.json`; validation pins the algorithm and enforces
   issuer, audience, and expiry.
-- Access is fail-closed: the GitHub id is checked against the allowlist at both
-  the callback and token issuance.
+- Access is fail-closed: the GitHub id is checked against the allowlist at the
+  callback, at token issuance, and again on every refresh.
+- The token response includes a `refresh_token` (rotated on each use) so
+  compliant clients renew their access token silently instead of repeating the
+  GitHub login every `token_ttl`.
 - PKCE (S256) is mandatory; auth codes are single-use with a short TTL; redirect
   URIs are matched exactly.
 - In-memory client/consent/pending state is capped and rejected-when-full rather

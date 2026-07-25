@@ -21,11 +21,12 @@ type GitHubBridge interface {
 }
 
 type Handlers struct {
-	Issuer      string
-	Resource    string
-	CallbackURL string
-	TokenTTL    time.Duration
-	Consent     bool
+	Issuer          string
+	Resource        string
+	CallbackURL     string
+	TokenTTL        time.Duration
+	RefreshTokenTTL time.Duration
+	Consent         bool
 
 	// ResourceOrigin is the precomputed origin of Resource (optional; derived
 	// from Resource when empty).

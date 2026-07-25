@@ -50,16 +50,17 @@ func run() error {
 	go gcLoop(store)
 
 	oauthH := &oauth.Handlers{
-		Issuer:         cfg.Issuer,
-		Resource:       cfg.Resource,
-		ResourceOrigin: oauth.OriginOf(cfg.Resource),
-		CallbackURL:    cfg.Issuer + routes.Callback,
-		TokenTTL:       cfg.TokenTTL,
-		Consent:        cfg.Consent(),
-		Store:          store,
-		Allow:          allowlist.New(cfg.AllowedGitHubIDs),
-		Tokens:         issuer,
-		GitHub:         github.New(cfg.GitHub.ClientID, cfg.GitHub.ClientSecret),
+		Issuer:          cfg.Issuer,
+		Resource:        cfg.Resource,
+		ResourceOrigin:  oauth.OriginOf(cfg.Resource),
+		CallbackURL:     cfg.Issuer + routes.Callback,
+		TokenTTL:        cfg.TokenTTL,
+		RefreshTokenTTL: cfg.RefreshTokenTTL,
+		Consent:         cfg.Consent(),
+		Store:           store,
+		Allow:           allowlist.New(cfg.AllowedGitHubIDs),
+		Tokens:          issuer,
+		GitHub:          github.New(cfg.GitHub.ClientID, cfg.GitHub.ClientSecret),
 	}
 
 	disc := &discovery.Handlers{Issuer: cfg.Issuer, Resource: cfg.Resource, Signer: signer}

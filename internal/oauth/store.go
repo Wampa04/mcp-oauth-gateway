@@ -24,6 +24,16 @@ type AuthCode struct {
 	Expiry        time.Time
 }
 
+// RefreshToken lets a client obtain a fresh access token without repeating the
+// GitHub authorization flow. It is single-use: each refresh rotates it.
+type RefreshToken struct {
+	ClientID     string
+	GitHubUserID int64
+	Resource     string
+	Scope        string
+	Expiry       time.Time
+}
+
 // PendingFlow links a GitHub callback (keyed by our state) back to the original
 // client authorization request.
 type PendingFlow struct {
@@ -45,25 +55,28 @@ type consentGrant struct {
 // memory. When full we reject new entries rather than evict existing ones (which
 // would let a flood knock out established registrations).
 const (
-	maxClients  = 10000
-	maxPending  = 10000
-	maxConsents = 10000
+	maxClients      = 10000
+	maxPending      = 10000
+	maxConsents     = 10000
+	maxRefreshToken = 10000
 )
 
 type Store struct {
-	mu       sync.Mutex
-	clients  map[string]*Client
-	codes    map[string]*AuthCode
-	pending  map[string]*PendingFlow
-	consents map[string]consentGrant
+	mu            sync.Mutex
+	clients       map[string]*Client
+	codes         map[string]*AuthCode
+	pending       map[string]*PendingFlow
+	consents      map[string]consentGrant
+	refreshTokens map[string]*RefreshToken
 }
 
 func NewStore() *Store {
 	return &Store{
-		clients:  make(map[string]*Client),
-		codes:    make(map[string]*AuthCode),
-		pending:  make(map[string]*PendingFlow),
-		consents: make(map[string]consentGrant),
+		clients:       make(map[string]*Client),
+		codes:         make(map[string]*AuthCode),
+		pending:       make(map[string]*PendingFlow),
+		consents:      make(map[string]consentGrant),
+		refreshTokens: make(map[string]*RefreshToken),
 	}
 }
 
@@ -171,7 +184,39 @@ func (s *Store) TakeConsent(token string) (string, bool) {
 	return g.clientID, true
 }
 
-// GC drops expired codes, pending flows and consent tokens. Call periodically.
+// SaveRefreshToken stores a refresh token; returns false if the store is full
+// even after reclaiming expired entries.
+func (s *Store) SaveRefreshToken(token string, rt *RefreshToken) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.refreshTokens) >= maxRefreshToken {
+		s.gcLocked()
+		if len(s.refreshTokens) >= maxRefreshToken {
+			return false
+		}
+	}
+	s.refreshTokens[token] = rt
+	return true
+}
+
+// TakeRefreshToken removes and returns a refresh token (single-use; callers
+// rotate by issuing a new one on every refresh); ok is false if missing/expired.
+func (s *Store) TakeRefreshToken(token string) (*RefreshToken, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt, ok := s.refreshTokens[token]
+	if !ok {
+		return nil, false
+	}
+	delete(s.refreshTokens, token)
+	if time.Now().After(rt.Expiry) {
+		return nil, false
+	}
+	return rt, true
+}
+
+// GC drops expired codes, pending flows, consent tokens and refresh tokens.
+// Call periodically.
 func (s *Store) GC() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,6 +239,11 @@ func (s *Store) gcLocked() {
 	for k, v := range s.consents {
 		if now.After(v.expiry) {
 			delete(s.consents, k)
+		}
+	}
+	for k, v := range s.refreshTokens {
+		if now.After(v.Expiry) {
+			delete(s.refreshTokens, k)
 		}
 	}
 }

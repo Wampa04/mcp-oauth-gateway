@@ -45,15 +45,16 @@ func newTestHandlers(t *testing.T, allowed []int64, userID int64) (*Handlers, *f
 	}
 	br := &fakeBridge{userID: userID}
 	return &Handlers{
-		Issuer:      testIssuer,
-		Resource:    testIssuer,
-		CallbackURL: testIssuer + "/callback",
-		TokenTTL:    time.Hour,
-		Consent:     false,
-		Store:       NewStore(),
-		Allow:       allowlist.New(allowed),
-		Tokens:      token.NewIssuer(key, "kid", testIssuer),
-		GitHub:      br,
+		Issuer:          testIssuer,
+		Resource:        testIssuer,
+		CallbackURL:     testIssuer + "/callback",
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 30 * 24 * time.Hour,
+		Consent:         false,
+		Store:           NewStore(),
+		Allow:           allowlist.New(allowed),
+		Tokens:          token.NewIssuer(key, "kid", testIssuer),
+		GitHub:          br,
 	}, br
 }
 
@@ -147,6 +148,138 @@ func TestFullFlow(t *testing.T) {
 	}
 	if tok.AccessToken == "" || tok.TokenType != "Bearer" {
 		t.Fatalf("bad token response: %+v", tok)
+	}
+}
+
+func TestRefreshTokenIssuedAndUsable(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+	code := runAuthorize(t, h, br, clientID).Query().Get("code")
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", testRedirect)
+	form.Set("client_id", clientID)
+	form.Set("code_verifier", testVerifier)
+
+	rr := postToken(h, form)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Token status = %d, body %s", rr.Code, rr.Body.String())
+	}
+	var tok tokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+	if tok.RefreshToken == "" {
+		t.Fatal("expected a refresh_token in the authorization_code response")
+	}
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", tok.RefreshToken)
+	refreshForm.Set("client_id", clientID)
+
+	rr2 := postToken(h, refreshForm)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("refresh Token status = %d, body %s", rr2.Code, rr2.Body.String())
+	}
+	var tok2 tokenResponse
+	if err := json.Unmarshal(rr2.Body.Bytes(), &tok2); err != nil {
+		t.Fatal(err)
+	}
+	if tok2.AccessToken == "" || tok2.RefreshToken == "" {
+		t.Fatalf("bad refresh response: %+v", tok2)
+	}
+	if tok2.RefreshToken == tok.RefreshToken {
+		t.Fatal("expected refresh token to rotate, got the same one back")
+	}
+}
+
+func TestRefreshTokenSingleUse(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+	code := runAuthorize(t, h, br, clientID).Query().Get("code")
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", testRedirect)
+	form.Set("client_id", clientID)
+	form.Set("code_verifier", testVerifier)
+	rr := postToken(h, form)
+	var tok tokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", tok.RefreshToken)
+	refreshForm.Set("client_id", clientID)
+
+	if rr := postToken(h, refreshForm); rr.Code != http.StatusOK {
+		t.Fatalf("first refresh failed: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := postToken(h, refreshForm); rr.Code == http.StatusOK {
+		t.Fatal("expected refresh token reuse to be rejected")
+	}
+}
+
+func TestRefreshTokenClientMismatchRejected(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+	code := runAuthorize(t, h, br, clientID).Query().Get("code")
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", testRedirect)
+	form.Set("client_id", clientID)
+	form.Set("code_verifier", testVerifier)
+	rr := postToken(h, form)
+	var tok tokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", tok.RefreshToken)
+	refreshForm.Set("client_id", "someone-elses-client")
+
+	if rr := postToken(h, refreshForm); rr.Code == http.StatusOK {
+		t.Fatal("expected client_id mismatch on refresh to be rejected")
+	}
+}
+
+func TestRefreshTokenRevokedAllowlistRejected(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+	code := runAuthorize(t, h, br, clientID).Query().Get("code")
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", testRedirect)
+	form.Set("client_id", clientID)
+	form.Set("code_verifier", testVerifier)
+	rr := postToken(h, form)
+	var tok tokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+
+	h.Allow = allowlist.New(nil) // user removed from the allowlist
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", tok.RefreshToken)
+	refreshForm.Set("client_id", clientID)
+
+	rr2 := postToken(h, refreshForm)
+	if rr2.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for de-allowlisted user, got %d", rr2.Code)
 	}
 }
 
