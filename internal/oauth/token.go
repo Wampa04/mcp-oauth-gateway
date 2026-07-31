@@ -66,8 +66,15 @@ func (h *Handlers) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 	h.issueTokens(w, ac.ClientID, ac.GitHubUserID, ac.Resource, ac.Scope)
 }
 
+// tokenFromRefreshToken validates against a non-destructive peek and only
+// consumes the presented refresh token once its replacement is safely
+// persisted, so a client_id mismatch, a de-allowlisted user, or the refresh
+// store being briefly at capacity leaves the still-valid token usable for a
+// retry instead of permanently stranding the client (forcing a full GitHub
+// re-login even though the session was otherwise fine).
 func (h *Handlers) tokenFromRefreshToken(w http.ResponseWriter, r *http.Request) {
-	rt, ok := h.Store.TakeRefreshToken(r.Form.Get("refresh_token"))
+	old := r.Form.Get("refresh_token")
+	rt, ok := h.Store.PeekRefreshToken(old)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_grant", "unknown, expired or already-used refresh token")
 		return
@@ -82,7 +89,41 @@ func (h *Handlers) tokenFromRefreshToken(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "access_denied", "this GitHub account is not permitted")
 		return
 	}
-	h.issueTokens(w, rt.ClientID, rt.GitHubUserID, rt.Resource, rt.Scope)
+
+	sub := strconv.FormatInt(rt.GitHubUserID, 10)
+	access, err := h.Tokens.Issue(sub, rt.Resource, h.TokenTTL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "could not issue token")
+		return
+	}
+	newRefresh := randomToken()
+	if !h.Store.SaveRefreshToken(newRefresh, &RefreshToken{
+		ClientID:     rt.ClientID,
+		GitHubUserID: rt.GitHubUserID,
+		Resource:     rt.Resource,
+		Scope:        rt.Scope,
+		Expiry:       time.Now().Add(h.RefreshTokenTTL),
+	}) {
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many refresh tokens outstanding, try again later")
+		return
+	}
+	// Rotation is complete and a usable replacement exists: only now retire the
+	// presented token. If a concurrent request already consumed it first, that
+	// request completed a valid rotation, so give up the just-minted duplicate
+	// rather than hand out two live refresh tokens for one.
+	if _, ok := h.Store.TakeRefreshToken(old); !ok {
+		h.Store.TakeRefreshToken(newRefresh)
+		writeError(w, http.StatusBadRequest, "invalid_grant", "unknown, expired or already-used refresh token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, tokenResponse{
+		AccessToken:  access,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(h.TokenTTL.Seconds()),
+		RefreshToken: newRefresh,
+		Scope:        rt.Scope,
+	})
 }
 
 // issueTokens signs a new access token and rotates the refresh token.

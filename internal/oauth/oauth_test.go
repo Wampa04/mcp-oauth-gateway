@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,6 +198,51 @@ func TestRefreshTokenIssuedAndUsable(t *testing.T) {
 	}
 }
 
+func TestRefreshTokenConcurrentUseOnlyOneSucceeds(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+	code := runAuthorize(t, h, br, clientID).Query().Get("code")
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", testRedirect)
+	form.Set("client_id", clientID)
+	form.Set("code_verifier", testVerifier)
+	rr := postToken(h, form)
+	var tok tokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", tok.RefreshToken)
+	refreshForm.Set("client_id", clientID)
+
+	const n = 20
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = postToken(h, refreshForm).Code
+		}(i)
+	}
+	wg.Wait()
+
+	successes := 0
+	for _, c := range codes {
+		if c == http.StatusOK {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one concurrent refresh to succeed, got %d", successes)
+	}
+}
+
 func TestRefreshTokenSingleUse(t *testing.T) {
 	h, br := newTestHandlers(t, []int64{42}, 42)
 	clientID := registerClient(t, h)
@@ -251,6 +298,13 @@ func TestRefreshTokenClientMismatchRejected(t *testing.T) {
 	if rr := postToken(h, refreshForm); rr.Code == http.StatusOK {
 		t.Fatal("expected client_id mismatch on refresh to be rejected")
 	}
+
+	// The mismatched attempt must not have burned the token: a retry with the
+	// correct client_id should still work.
+	refreshForm.Set("client_id", clientID)
+	if rr := postToken(h, refreshForm); rr.Code != http.StatusOK {
+		t.Fatalf("token must survive a client_id-mismatch attempt, got %d: %s", rr.Code, rr.Body.String())
+	}
 }
 
 func TestRefreshTokenRevokedAllowlistRejected(t *testing.T) {
@@ -280,6 +334,56 @@ func TestRefreshTokenRevokedAllowlistRejected(t *testing.T) {
 	rr2 := postToken(h, refreshForm)
 	if rr2.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for de-allowlisted user, got %d", rr2.Code)
+	}
+
+	// Not burned either: re-adding the user to the allowlist lets the same
+	// refresh token succeed, instead of forcing a full GitHub re-login.
+	h.Allow = allowlist.New([]int64{42})
+	if rr := postToken(h, refreshForm); rr.Code != http.StatusOK {
+		t.Fatalf("token must survive a de-allowlisted attempt, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRefreshTokenNotBurnedWhenStoreFull(t *testing.T) {
+	h, br := newTestHandlers(t, []int64{42}, 42)
+	clientID := registerClient(t, h)
+	code := runAuthorize(t, h, br, clientID).Query().Get("code")
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", testRedirect)
+	form.Set("client_id", clientID)
+	form.Set("code_verifier", testVerifier)
+	rr := postToken(h, form)
+	var tok tokenResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fill the refresh-token store to capacity (the presented token is already
+	// counted in it) so SaveRefreshToken for the replacement must fail.
+	for i := 0; i < maxRefreshToken-1; i++ {
+		if !h.Store.SaveRefreshToken(strconv.Itoa(i), &RefreshToken{ClientID: clientID, Expiry: time.Now().Add(time.Hour)}) {
+			t.Fatalf("filler token %d should be accepted", i)
+		}
+	}
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", tok.RefreshToken)
+	refreshForm.Set("client_id", clientID)
+
+	rr2 := postToken(h, refreshForm)
+	if rr2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when refresh store is full, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+
+	// Free up room and retry with the SAME token: it must not have been burned
+	// by the failed attempt.
+	h.Store.TakeRefreshToken("0")
+	if rr := postToken(h, refreshForm); rr.Code != http.StatusOK {
+		t.Fatalf("token must survive a store-full attempt, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

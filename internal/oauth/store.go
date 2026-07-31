@@ -199,6 +199,18 @@ func (s *Store) SaveRefreshToken(token string, rt *RefreshToken) bool {
 	return true
 }
 
+// PeekRefreshToken looks up a refresh token without consuming it, so callers
+// can validate it before committing to rotation; ok is false if missing/expired.
+func (s *Store) PeekRefreshToken(token string) (*RefreshToken, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt, ok := s.refreshTokens[token]
+	if !ok || time.Now().After(rt.Expiry) {
+		return nil, false
+	}
+	return rt, true
+}
+
 // TakeRefreshToken removes and returns a refresh token (single-use; callers
 // rotate by issuing a new one on every refresh); ok is false if missing/expired.
 func (s *Store) TakeRefreshToken(token string) (*RefreshToken, bool) {
