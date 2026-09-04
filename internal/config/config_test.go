@@ -42,6 +42,9 @@ func TestLoadValid(t *testing.T) {
 	if cfg.TokenTTL != time.Hour {
 		t.Errorf("TokenTTL default = %v", cfg.TokenTTL)
 	}
+	if cfg.RefreshTokenTTL != 30*24*time.Hour {
+		t.Errorf("RefreshTokenTTL default = %v", cfg.RefreshTokenTTL)
+	}
 	if !cfg.Consent() {
 		t.Error("Consent should default to true")
 	}

@@ -31,6 +31,9 @@ type Config struct {
 	TokenTTL    time.Duration `yaml:"-"`
 	TokenTTLRaw string        `yaml:"token_ttl"`
 
+	RefreshTokenTTL    time.Duration `yaml:"-"`
+	RefreshTokenTTLRaw string        `yaml:"refresh_token_ttl"`
+
 	RequireConsent    *bool `yaml:"require_consent"` // default true
 	requireConsentVal bool
 
@@ -113,6 +116,15 @@ func (c *Config) applyEnvAndDefaults() error {
 		c.TokenTTL = d
 	}
 
+	c.RefreshTokenTTL = 30 * 24 * time.Hour
+	if c.RefreshTokenTTLRaw != "" {
+		d, err := time.ParseDuration(c.RefreshTokenTTLRaw)
+		if err != nil {
+			return fmt.Errorf("invalid refresh_token_ttl %q: %w", c.RefreshTokenTTLRaw, err)
+		}
+		c.RefreshTokenTTL = d
+	}
+
 	c.requireConsentVal = true
 	if c.RequireConsent != nil {
 		c.requireConsentVal = *c.RequireConsent
@@ -145,6 +157,9 @@ func (c *Config) Validate() error {
 	}
 	if c.TokenTTL <= 0 {
 		return fmt.Errorf("config: token_ttl must be positive")
+	}
+	if c.RefreshTokenTTL <= 0 {
+		return fmt.Errorf("config: refresh_token_ttl must be positive")
 	}
 	if (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
 		return fmt.Errorf("config: tls.cert_file and tls.key_file must be set together")

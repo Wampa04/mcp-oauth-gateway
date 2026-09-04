@@ -41,7 +41,7 @@ func (h *Handlers) AuthorizationServer(w http.ResponseWriter, _ *http.Request) {
 		"registration_endpoint":                 h.Issuer + routes.Register,
 		"jwks_uri":                              h.Issuer + routes.JWKS,
 		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
 	})
